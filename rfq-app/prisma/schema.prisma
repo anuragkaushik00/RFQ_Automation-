@@ -1,0 +1,232 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Auth ────────────────────────────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         UserRole @default(VIEWER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+enum UserRole {
+  ADMIN
+  BUYER
+  VIEWER
+}
+
+// ─── Vendor ──────────────────────────────────────────────────────────────────
+
+model Vendor {
+  id         String      @id @default(cuid())
+  name       String
+  email      String      @unique
+  phone      String?
+  website    String?
+  category   String?
+  address    String?
+  gstin      String?
+  isActive   Boolean     @default(true)
+  rating     Int         @default(0)
+  notes      String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  rfqVendors RfqVendor[]
+  quotes     Quote[]
+  emails     Email[]
+}
+
+// ─── RFQ ─────────────────────────────────────────────────────────────────────
+
+model Rfq {
+  id          String      @id @default(cuid())
+  number      String      @unique
+  title       String
+  description String?
+  status      RfqStatus   @default(DRAFT)
+  dueDate     DateTime?
+  awardedAt   DateTime?
+  currency    String      @default("INR")
+  totalBudget Decimal?    @db.Decimal(14, 2)
+  attachments Json?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  items       RfqItem[]
+  rfqVendors  RfqVendor[]
+  emails      Email[]
+  quotes      Quote[]
+}
+
+enum RfqStatus {
+  DRAFT
+  SENT
+  PARTIAL
+  RECEIVED
+  EVALUATING
+  AWARDED
+  CLOSED
+  CANCELLED
+}
+
+model RfqItem {
+  id          String      @id @default(cuid())
+  rfqId       String
+  rfq         Rfq         @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  lineNumber  Int
+  description String
+  partNumber  String?
+  quantity    Decimal     @db.Decimal(12, 4)
+  unit        String      @default("PCS")
+  specs       String?
+  targetPrice Decimal?    @db.Decimal(14, 2)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  quoteItems  QuoteItem[]
+
+  @@index([rfqId])
+}
+
+model RfqVendor {
+  id          String          @id @default(cuid())
+  rfqId       String
+  rfq         Rfq             @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  vendorId    String
+  vendor      Vendor          @relation(fields: [vendorId], references: [id])
+  status      RfqVendorStatus @default(PENDING)
+  sentAt      DateTime?
+  respondedAt DateTime?
+  createdAt   DateTime        @default(now())
+
+  @@unique([rfqId, vendorId])
+  @@index([rfqId])
+  @@index([vendorId])
+}
+
+enum RfqVendorStatus {
+  PENDING
+  SENT
+  ACKNOWLEDGED
+  QUOTED
+  NO_QUOTE
+}
+
+// ─── Email ────────────────────────────────────────────────────────────────────
+
+model Email {
+  id          String         @id @default(cuid())
+  rfqId       String?
+  rfq         Rfq?           @relation(fields: [rfqId], references: [id])
+  vendorId    String?
+  vendor      Vendor?        @relation(fields: [vendorId], references: [id])
+  messageId   String?        @unique
+  threadId    String?
+  from        String
+  fromEmail   String
+  to          String
+  subject     String
+  bodyText    String?
+  bodyHtml    String?
+  direction   EmailDirection
+  isRead      Boolean        @default(false)
+  flags       EmailFlag[]
+  aiProcessed Boolean        @default(false)
+  receivedAt  DateTime
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  quote       Quote?
+
+  @@index([rfqId])
+  @@index([vendorId])
+  @@index([threadId])
+  @@index([receivedAt])
+}
+
+enum EmailDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum EmailFlag {
+  NEEDS_REPLY
+  QUOTE_RECEIVED
+  URGENT
+  FOLLOW_UP
+  ATTACHED_QUOTE
+  CLARIFICATION_REQUESTED
+}
+
+// ─── Quote ────────────────────────────────────────────────────────────────────
+
+model Quote {
+  id           String      @id @default(cuid())
+  rfqId        String
+  rfq          Rfq         @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  vendorId     String
+  vendor       Vendor      @relation(fields: [vendorId], references: [id])
+  emailId      String?     @unique
+  email        Email?      @relation(fields: [emailId], references: [id])
+  status       QuoteStatus @default(PENDING)
+  priceType    PriceType   @default(UNIT)
+  totalAmount  Decimal?    @db.Decimal(14, 2)
+  currency     String      @default("INR")
+  leadTimeDays Int?
+  validityDays Int?
+  paymentTerms String?
+  confidence   Int?
+  aiExtracted  Json?
+  notes        String?
+  isAwarded    Boolean     @default(false)
+  awardedAt    DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  items        QuoteItem[]
+
+  @@index([rfqId])
+  @@index([vendorId])
+  @@index([status])
+}
+
+enum QuoteStatus {
+  PENDING
+  RECEIVED
+  SHORTLISTED
+  REJECTED
+  AWARDED
+}
+
+enum PriceType {
+  UNIT
+  LOT
+  TOTAL
+}
+
+model QuoteItem {
+  id           String   @id @default(cuid())
+  quoteId      String
+  quote        Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  rfqItemId    String?
+  rfqItem      RfqItem? @relation(fields: [rfqItemId], references: [id])
+  description  String
+  quantity     Decimal  @db.Decimal(12, 4)
+  unit         String   @default("PCS")
+  unitPrice    Decimal  @db.Decimal(14, 2)
+  totalPrice   Decimal  @db.Decimal(14, 2)
+  leadTimeDays Int?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([quoteId])
+  @@index([rfqItemId])
+}
